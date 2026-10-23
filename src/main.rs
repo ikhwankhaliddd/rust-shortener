@@ -34,7 +34,11 @@ mod tests {
     use tower::ServiceExt; // .oneshot()
 
     async fn send(method: &str, uri: &str) -> Response {
-        let req = Request::builder().method(method).uri(uri).body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
         app().oneshot(req).await.unwrap()
     }
 
@@ -57,11 +61,17 @@ mod tests {
 
     #[tokio::test]
     async fn post_health_returns_405() {
-        assert_eq!(send("POST", "/health").await.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            send("POST", "/health").await.status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
     }
 
     #[tokio::test]
     async fn unknown_path_returns_404() {
-        assert_eq!(send("GET", "/does-not-exist").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            send("GET", "/does-not-exist").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 }
