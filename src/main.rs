@@ -1,6 +1,8 @@
 use axum::{Json, Router, routing::get};
 use serde::Serialize;
 
+const ADDR: &str = "127.0.0.1:3000";
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -14,8 +16,13 @@ fn app() -> Router {
     Router::new().route("/health", get(health))
 }
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() {
+    let listener = tokio::net::TcpListener::bind(ADDR)
+        .await
+        .unwrap_or_else(|e| panic!("failed to bind {ADDR}: {e}"));
+    println!("listening on http://{ADDR}");
+    axum::serve(listener, app()).await.unwrap();
 }
 
 #[cfg(test)]
