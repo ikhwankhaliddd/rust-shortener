@@ -1,4 +1,9 @@
-use axum::{Json, Router, routing::get};
+mod links;
+
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
 use serde::Serialize;
 
 const ADDR: &str = "127.0.0.1:3000";
@@ -13,7 +18,10 @@ async fn health() -> Json<HealthResponse> {
 }
 
 fn app() -> Router {
-    Router::new().route("/health", get(health))
+    Router::new()
+        .route("/health", get(health))
+        .route("/links", post(links::create_link))
+        .with_state(links::AppState::default())
 }
 
 #[tokio::main]
