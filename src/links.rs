@@ -3,8 +3,9 @@ use std::collections::hash_map::Entry;
 use std::sync::{Arc, RwLock};
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::Redirect;
 use rand::RngExt;
 use rand::distr::Alphanumeric;
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,17 @@ pub async fn create_link(
     }
 }
 
+pub async fn follow_link(
+    State(state): State<AppState>,
+    Path(code): Path<String>,
+) -> Result<Redirect, StatusCode> {
+    let links = state.links.read().expect("link store lock poisoned");
+    links
+        .get(&code)
+        .map(|link| Redirect::temporary(&link.url))
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
 fn generate_code() -> String {
     rand::rng()
         .sample_iter(Alphanumeric)
@@ -73,6 +85,7 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use axum::response::Response;
+    use std::collections::HashSet;
     use tower::ServiceExt;
 
     async fn post_link(app: &Router, body: &str) -> Response {
@@ -86,6 +99,17 @@ mod tests {
     async fn json(res: Response) -> serde_json::Value {
         let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    async fn get(app: &Router, uri: &str) -> Response {
+        let req = Request::get(uri).body(Body::empty()).unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    async fn create(app: &Router, url: &str) -> String {
+        let res = post_link(app, &serde_json::json!({ "url": url }).to_string()).await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+        json(res).await["code"].as_str().unwrap().to_owned()
     }
 
     #[test]
@@ -168,5 +192,64 @@ mod tests {
             json(res).await["url"],
             "https://id.wikipedia.org/wiki/Bahasa_Indon%C3%A9sia"
         );
+    }
+
+    #[tokio::test]
+    async fn get_code_redirects_to_stored_url() {
+        let app = app();
+        let code = create(&app, "https://mindwalker.ai/products/mindgraph").await;
+        let res = get(&app, &format!("/{code}")).await;
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers()[header::LOCATION],
+            "https://mindwalker.ai/products/mindgraph"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_unknown_code_returns_404() {
+        let app = app();
+        assert_eq!(get(&app, "/zzzzzz").await.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn non_ascii_url_redirects_with_encoded_location() {
+        let app = app();
+        let code = create(&app, "https://id.wikipedia.org/wiki/Bahasa_Indonésia").await;
+        let res = get(&app, &format!("/{code}")).await;
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            res.headers()[header::LOCATION],
+            "https://id.wikipedia.org/wiki/Bahasa_Indon%C3%A9sia"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_is_not_treated_as_a_code() {
+        let app = app();
+        assert_eq!(get(&app, "/health").await.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_posts_are_all_stored() {
+        let app = app();
+        let tasks: Vec<_> = (0..100)
+            .map(|i| {
+                let app = app.clone();
+                tokio::spawn(async move {
+                    let url = format!("https://example.com/{i}");
+                    (create(&app, &url).await, url)
+                })
+            })
+            .collect();
+        let mut codes = HashSet::new();
+        for task in tasks {
+            let (code, url) = task.await.unwrap();
+            assert!(codes.insert(code.clone()), "duplicate code {code}");
+            let res = get(&app, &format!("/{code}")).await;
+            assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+            assert_eq!(res.headers()[header::LOCATION], url.as_str());
+        }
+        assert_eq!(codes.len(), 100);
     }
 }

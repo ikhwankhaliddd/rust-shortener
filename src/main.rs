@@ -21,6 +21,7 @@ fn app() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/links", post(links::create_link))
+        .route("/{code}", get(links::follow_link))
         .with_state(links::AppState::default())
 }
 
